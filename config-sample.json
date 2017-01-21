@@ -1,0 +1,11 @@
+{
+    "_global_" : {
+        "cloudflare_key": "這邊放 cloudflare 的 key",
+        "cloudflare_mail": "這邊放 cloudflare 的帳號"
+    },
+    "govapi.tw": {
+        "github_repo": "govapitw/govapi.tw",
+        "github_path": "/govapi.tw",
+        "cloudflare_zoneid": "d9ccbf787b0102b6a14766b4a6f421cc"
+    }
+}
