@@ -187,6 +187,10 @@ class SyncLib
                         'oooooooo',
                     ),
                 ), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+            } else if ($type == 'not-in-cloudflare') {
+                // TODO: 要把 github 設定同步到 cloudflare
+            } else if ($type == 'diff-dns-config') {
+                // TODO: 要把 github 設定同步到 cloudflare
             }
         }
     }
