@@ -73,9 +73,17 @@ class SyncLib
         $repo_path = self::getRepoPath($root);
         $obj = new StdClass;
         foreach (glob($repo_path . '/' . trim($config->{$root}->github_path, '/') . '/*.json') as $file) {
+            if (is_link($file)) {
+                continue;
+            }
             $domain_obj = json_decode(file_get_contents($file));
-            $domain = substr(basename($file), 0, -5);
-            $obj->{$domain} = $domain_obj;
+            $domain_obj->filename = $file;
+            foreach ($domain_obj->domains as $domain => $config) {
+                if (property_exists($obj, $domain)) {
+                    throw new Exception("{$domain} 同時存在於 " . $obj->{$domain}->filename . " 和 {$domain_obj->filename}");
+                }
+                $obj->{$domain} = $domain_obj;
+            }
         }
         return $obj;
     }
