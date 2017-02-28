@@ -12,16 +12,39 @@ class SyncLib
         return self::$_config;
     }
 
-    public static function cloudflareRequest($url)
+    public static function cloudflareRequest($url, $post_params = null, $method = null)
     {
-        $curl = curl_init($url);
-        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($curl, CURLOPT_HTTPHEADER, array(
+        $headers = array(
             'X-Auth-Email:' . getenv('cloudflare_mail'),
             'X-Auth-Key:' . getenv('cloudflare_key'),
-        ));
+        );
+        $curl = curl_init($url);
+        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+        if (!is_null($method)) {
+            curl_Setopt($curl, CURLOPT_CUSTOMREQUEST, strtoupper($method));
+        }
+
+        if (!is_null($post_params)) {
+            if (is_array($post_params)) {
+                curl_setopt($curl, CURLOPT_POSTFIELDS, implode('&', array_map(function($k) use ($post_params) {
+                    return urlencode($k) . '=' . urlencode($post_params[$k]);
+                }, array_keys($post_params))));
+            } elseif (is_string($post_params)) {
+                curl_setopt($curl, CURLOPT_POSTFIELDS, $post_params);
+            }
+            $headers[] = 'Content-type: application/json';
+        }
+        curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
         $content = curl_exec($curl);
-        return $content;
+        if (!$obj = json_decode($content)) {
+            throw new Exception("Response from {$url} is not valid JSON: " . $content);
+        }
+        if (!property_exists($obj, 'success') or !$obj->success) {
+            throw new Exception("Response from {$url} is not success: " . $content);
+        }
+
+        curl_close($curl);
+        return $obj;
     }
 
     public static function getCloudFlareConfig($root)
@@ -54,7 +77,7 @@ class SyncLib
         $domain_config = self::getCloudFlareConfig($root);
         putenv('cloudflare_key=' . $domain_config->cloudflare_key);
         putenv('cloudflare_mail=' . $domain_config->cloudflare_mail);
-        $obj = json_decode(self::cloudflareRequest($url));
+        $obj = self::cloudflareRequest($url);
         if (!$obj->success) {
             print_r($obj);
             throw new Exception("get cloudflare domain failed");
@@ -98,10 +121,7 @@ class SyncLib
             if (!array_key_exists($domain, $cloudflare_domains)) {
                 $cloudflare_domains[$domain] = array();
             }
-            $cloudflare_domains[$domain][] = array(
-                $cf_record->type,
-                $cf_record->content,
-            );
+            $cloudflare_domains[$domain][] = $cf_record;
         }
 
         foreach ($cloudflare_domains as $domain => $record) {
@@ -115,12 +135,14 @@ class SyncLib
             }
 
             $github_record = $github_records->{$domain}->domains->{$domain};
-            if (!self::compareDNS($github_record, $record)) {
+            $cloudflare_record = array_map(function($r) { return array($r->type, $r->content);}, $record);
+            if (!self::compareDNS($github_record, $cloudflare_record)) {
                 $obj[] = array(
                     'diff-dns-config',
                     $domain,
                     $github_record,
                     $record,
+                    $github_records->{$domain}->filename
                 );
             }
             unset($github_records->{$domain});
@@ -168,6 +190,10 @@ class SyncLib
         if ($ret !== 0) {
             throw new Exception("git pull failed");
         }
+        $path = $repo_path . '/' . trim($config->{$root}->github_path, '/');
+        if (!file_exists($path)) {
+            mkdir($path);
+        }
 
         return $repo_path;
     }
@@ -183,22 +209,94 @@ class SyncLib
             $domain = array_shift($diff_record);
 
             if ($type == 'not-in-github') {
-                $path = $repo_path . '/' . trim($config->{$root}->github_path, '/') . '/' . $domain . '.json';
-                $domain_setting = array_shift($diff_record);
+                $command = trim(readline("{$domain} 設定在 cloudflare 存在，請問你要? \nnew) 增加到 github\ndelete) 從 cloudflare 刪除\n[new|delete]: "));
 
-                file_put_contents($path, json_encode(array(
-                    'domains' => array(
-                        $domain => $domain_setting,
-                    ),
-                    'repository' => 'oooooooo',
-                    'maintainer' => array(
-                        'oooooooo',
-                    ),
-                ), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                if ('new' == $command) {
+                    error_log("github 中沒有 {$domain} ，自動產生 /{$domain}.json");
+
+                    $path = $repo_path . '/' . trim($config->{$root}->github_path, '/') . '/' . $domain . '.json';
+                    $domain_setting = array_map(function($r) {
+                        return array($r->type, $r->content);
+                    }, array_shift($diff_record));
+
+                    file_put_contents($path, json_encode(array(
+                        'domains' => array(
+                            $domain => $domain_setting,
+                        ),
+                        'repository' => 'oooooooo',
+                        'maintainer' => array(
+                            'oooooooo',
+                        ),
+                    ), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                } elseif ('delete' == $command) {
+                    $url = sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/",  $config->{$root}->cloudflare_zoneid);
+                    $domain_config = self::getCloudFlareConfig($root);
+                    putenv('cloudflare_key=' . $domain_config->cloudflare_key);
+                    putenv('cloudflare_mail=' . $domain_config->cloudflare_mail);
+                    
+                    foreach ($diff_record[0] as $dns_record) {
+                        $request = self::cloudflareRequest($url . $dns_record->id, '', 'DELETE');
+                        error_log(json_encode($request));
+                    }
+                } else {
+                    throw new Exception("不明的指令 {$command}");
+                }
             } else if ($type == 'not-in-cloudflare') {
-                // TODO: 要把 github 設定同步到 cloudflare
+                if ('y' != trim(readline("是否要把 {$domain} 設定上傳到 cloudflare (y/n) "))) {
+                    continue;
+                }
+
+                $url = sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/",  $config->{$root}->cloudflare_zoneid);
+                $domain_config = self::getCloudFlareConfig($root);
+                putenv('cloudflare_key=' . $domain_config->cloudflare_key);
+                putenv('cloudflare_mail=' . $domain_config->cloudflare_mail);
+                    
+                foreach ($diff_record[0]->domains->{$domain} as $domain_config) {
+                    $request = self::cloudflareRequest($url, json_encode(array(
+                        'type' => $domain_config[0],
+                        'name' => $domain,
+                        'content' => $domain_config[1],
+                    )));
+                }
             } else if ($type == 'diff-dns-config') {
-                // TODO: 要把 github 設定同步到 cloudflare
+                list($github_record, $cloudflare_record, $github_path) = $diff_record;
+                echo "{$domain} 的設定在 github 和 cloudflare 不相同，請問您要以哪邊為準\n";
+                echo "github) " . json_encode($github_record) . "\n";
+                echo "cloudflare) " . json_encode(array_map(function($r) { return array($r->type, $r->content); }, $cloudflare_record)) . "\n";
+                $command = trim(readline("[github|cloudflare]: "));
+
+                if ('github' == $command) { // 以 github 為準
+                    $url = sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/",  $config->{$root}->cloudflare_zoneid);
+                    $domain_config = self::getCloudFlareConfig($root);
+                    putenv('cloudflare_key=' . $domain_config->cloudflare_key);
+                    putenv('cloudflare_mail=' . $domain_config->cloudflare_mail);
+                    
+                    // 先刪除掉 cloudflare 資料
+                    foreach ($cloudflare_record as $dns_record) {
+                        $request = self::cloudflareRequest($url . $dns_record->id, '', 'DELETE');
+                        error_log(json_encode($request));
+                    }
+
+                    // 再把 github 資料推上去
+                    foreach ($github_record as $domain_config) {
+                        $request = self::cloudflareRequest($url, json_encode(array(
+                            'type' => $domain_config[0],
+                            'name' => $domain,
+                            'content' => $domain_config[1],
+                        )));
+                    }
+                } elseif ('cloudflare' == $command) {
+                    error_log("更新 {$github_path}");
+
+                    $obj = json_decode(file_get_contents($github_path));
+                    $obj->domains->{$domain} = array_map(function($r) {
+                        return array($r->type, $r->content);
+                    }, $cloudflare_record);
+
+                    file_put_contents($github_path, json_encode($obj, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                } else {
+                    throw new Exception("不明的指令 {$command}");
+                }
             }
         }
     }
