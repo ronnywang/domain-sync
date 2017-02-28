@@ -4,6 +4,15 @@ class SyncLib
 {
     protected static $_config = null;
 
+    public static function toGithubDomainRecord($record)
+    {
+        if (property_exists($record, 'priority')) {
+            return array($record->type, $record->content, $record->priority);
+        } else {
+            return array($record->type, $record->content);
+        }
+    }
+
     public static function getConfig()
     {
         if (is_null(self::$_config)) {
@@ -135,7 +144,7 @@ class SyncLib
             }
 
             $github_record = $github_records->{$domain}->domains->{$domain};
-            $cloudflare_record = array_map(function($r) { return array($r->type, $r->content);}, $record);
+            $cloudflare_record = array_map(array('self', 'toGithubDomainRecord'), $record);
             if (!self::compareDNS($github_record, $cloudflare_record)) {
                 $obj[] = array(
                     'diff-dns-config',
@@ -215,9 +224,7 @@ class SyncLib
                     error_log("github 中沒有 {$domain} ，自動產生 /{$domain}.json");
 
                     $path = $repo_path . '/' . trim($config->{$root}->github_path, '/') . '/' . $domain . '.json';
-                    $domain_setting = array_map(function($r) {
-                        return array($r->type, $r->content);
-                    }, array_shift($diff_record));
+                    $domain_setting = array_map(array('self', 'toGithubDomainRecord'), array_shift($diff_record));
 
                     file_put_contents($path, json_encode(array(
                         'domains' => array(
@@ -252,17 +259,21 @@ class SyncLib
                 putenv('cloudflare_mail=' . $domain_config->cloudflare_mail);
                     
                 foreach ($diff_record[0]->domains->{$domain} as $domain_config) {
-                    $request = self::cloudflareRequest($url, json_encode(array(
+                    $v = array(
                         'type' => $domain_config[0],
                         'name' => $domain,
                         'content' => $domain_config[1],
-                    )));
+                    );
+                    if ($v['type'] == 'MX' and array_key_exists(2, $domain_config)) {
+                        $v['priority'] = $domain_config[2];
+                    };
+                    $request = self::cloudflareRequest($url, json_encode($v));
                 }
             } else if ($type == 'diff-dns-config') {
                 list($github_record, $cloudflare_record, $github_path) = $diff_record;
                 echo "{$domain} 的設定在 github 和 cloudflare 不相同，請問您要以哪邊為準\n";
                 echo "github) " . json_encode($github_record) . "\n";
-                echo "cloudflare) " . json_encode(array_map(function($r) { return array($r->type, $r->content); }, $cloudflare_record)) . "\n";
+                echo "cloudflare) " . json_encode(array_map(array('self', 'toGithubDomainRecord'), $cloudflare_record)) . "\n";
                 $command = trim(readline("[github|cloudflare]: "));
 
                 if ('github' == $command) { // 以 github 為準
@@ -279,19 +290,21 @@ class SyncLib
 
                     // 再把 github 資料推上去
                     foreach ($github_record as $domain_config) {
-                        $request = self::cloudflareRequest($url, json_encode(array(
+                        $v = array(
                             'type' => $domain_config[0],
                             'name' => $domain,
                             'content' => $domain_config[1],
-                        )));
+                        );
+                        if ($domain_config[0] == 'MX' and array_key_exists(2, $domain_config)) {
+                            $v['priority'] = $domain_config[2];
+                        }
+                        $request = self::cloudflareRequest($url, json_encode($v));
                     }
                 } elseif ('cloudflare' == $command) {
                     error_log("更新 {$github_path}");
 
                     $obj = json_decode(file_get_contents($github_path));
-                    $obj->domains->{$domain} = array_map(function($r) {
-                        return array($r->type, $r->content);
-                    }, $cloudflare_record);
+                    $obj->domains->{$domain} = array_map(array('self', 'toGithubDomainRecord'), $cloudflare_record);
 
                     file_put_contents($github_path, json_encode($obj, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
                 } else {
