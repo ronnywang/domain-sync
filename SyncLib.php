@@ -187,10 +187,12 @@ class SyncLib
             mkdir('/tmp/domain-sync');
         }
 
-        $repo_path = '/tmp/domain-sync/' .str_replace('/', '_', $config->{$root}->github_repo);
+        preg_match('#([^/:]*)/(.*)/?$#', $config->{$root}->github_repo, $matches);
+
+        $repo_path = '/tmp/domain-sync/' . implode('_', array($matches[1], $matches[2]));
         if (!file_exists($repo_path)) {
             chdir(dirname($repo_path));
-            system("git clone https://github.com/" . $config->{$root}->github_repo . " " . basename($repo_path), $ret);
+            system("git clone " . self::getRepositoryPath($config->{$root}->github_repo) . " " . basename($repo_path), $ret);
         } else {
             chdir($repo_path);
             system("git pull", $ret);
@@ -205,6 +207,18 @@ class SyncLib
         }
 
         return $repo_path;
+    }
+
+    public static function getRepositoryPath($path)
+    {
+        if (strpos($path, '@')) {
+            return $path;
+        }
+        if (strpos($path, 'https://') === 0) {
+            return $path;
+        }
+        return 'git@github.com:' . $path;
+
     }
 
     public static function handleDiff($diff_records, $root)
