@@ -232,7 +232,10 @@ class SyncLib
             $domain = array_shift($diff_record);
 
             if ($type == 'not-in-github') {
-                $command = trim(readline("{$domain} 設定在 cloudflare 存在，請問你要? \nnew) 增加到 github\ndelete) 從 cloudflare 刪除\n[new|delete]: "));
+                echo "{$domain} 設定在 cloudflare 存在，請問你要? \n";
+                echo "new) 增加到github\n";
+                echo "delete) 從 cloudflare 刪除\n";
+                $command = trim(readline("[new|delete]: "));
 
                 if ('new' == $command) {
                     error_log("github 中沒有 {$domain} ，自動產生 /{$domain}.json");
