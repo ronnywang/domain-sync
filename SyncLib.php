@@ -251,7 +251,7 @@ class SyncLib
                         'maintainer' => array(
                             'oooooooo',
                         ),
-                    ), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                    ), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
                 } elseif ('delete' == $command) {
                     $url = sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/",  $config->{$root}->cloudflare_zoneid);
                     $domain_config = self::getCloudFlareConfig($root);
@@ -323,7 +323,7 @@ class SyncLib
                     $obj = json_decode(file_get_contents($github_path));
                     $obj->domains->{$domain} = array_map(array('self', 'toGithubDomainRecord'), $cloudflare_record);
 
-                    file_put_contents($github_path, json_encode($obj, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                    file_put_contents($github_path, json_encode($obj, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
                 } else {
                     throw new Exception("不明的指令 {$command}");
                 }
